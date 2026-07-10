@@ -21,14 +21,16 @@ plot = 1
 
 #Dates
 start_date = datetime(2011, 1, 1)
-end_date   = datetime(2011, 11, 9)
+end_date   = datetime(2020, 12, 31)
+
 # ---------------- Inputs  ----------------
-root_dir     = r"E:\Modelos\Modelo_Tocantins_manningedit\Results\HDF"
-era5_folder  = r"D:\DOUTORAMENTO\Metereologia\ERA5\Interpolated_Watershed"
-precip_folder = r"E:\Modelos\Observational_precipitation\TAW_glue"
-hdf_path      = os.path.join(precip_folder, "chuva_observada.hdf5")      
+root_dir     = r"F:\Debora\Tocantins\Results\HDF"
+era5_folder  = r"E:\Debora\Interpolated_Watershed"
+precip_folder = r"F:\Debora\Araguaia"
+hdf_path      = os.path.join(precip_folder, "chuva_observada.hdf5")     
+ 
 # ---------------- Bains ----------------
-shapefile_dir = "E:/Modelos/Modelo_Tocantins/Water Balance/micro_RH_TAW_cut/"
+shapefile_dir = "F:/Debora/Water Balance/shapefiles/"
 shapefiles = [
     os.path.join(shapefile_dir, "sono/sono.shp"),
     os.path.join(shapefile_dir, "parana/parana.shp"),
@@ -52,7 +54,7 @@ basins_gdf = gpd.GeoDataFrame(
 )
 
 # ---------------- Drainage Network ----------------
-dn_file = r"E:\Modelos\WaterBalance_TAW\DrainageNetwork\tocantins.shp"
+dn_file = r"F:\Debora\Water Balance\DrainageNetwork\tocantins.shp"
 dn_gdf = gpd.read_file(dn_file)
 
 # garantir CRS (assumindo lon/lat)
@@ -60,7 +62,7 @@ if dn_gdf.crs is None:
     dn_gdf = dn_gdf.set_crs(epsg=4326)
 else:
     dn_gdf = dn_gdf.to_crs(epsg=4326)
-
+    
 # ---------------- Estruturas ----------------
 variables = ["FLOW","PM","ET","RO","RO_FLOW", "Infiltration","Pobs","P","T"] # SR
 acc = {var: [] for var in variables}
@@ -136,11 +138,37 @@ def plot_images(data_dict, title_prefix, cbar_label, filename_prefix, output_dir
     flow_min = 1e-1
     if log_scale:
         all_vals = all_vals[all_vals > flow_min]  # remove zeros para LogNorm
-    if vmin is None:
-        vmin = np.nanmin(all_vals[all_vals > 0])
+                
     if vmax is None:
-        vmax = np.nanpercentile(all_vals, 99) if len(all_vals)>0 else 1
+        vmax_raw = np.nanpercentile(all_vals, 99) if len(all_vals)>0 else 1
         #vmax = np.nanmax(all_vals)
+        if vmax_raw <= 3:
+            # Arredonda para a próxima casa decimal (ex: 0.73 -> 0.8 ou 0.75)
+            vmax = np.ceil(vmax_raw * 10) / 10
+        else:
+            vmax = np.ceil(vmax_raw / 5) * 5
+            vmax = np.round(vmax).astype(int)
+        vmax = float(vmax)
+        print('vmax',vmax)
+        
+    if vmin is None:
+        # Pega o menor valor maior que zero
+        vmin_raw = np.nanmin(all_vals[all_vals > 0]) if len(all_vals) > 0 else 0.1
+        
+        if log_scale:
+            # Para LOG, o vmin DEVE ser positivo. 
+            # Se o vmin_raw for muito baixo, 0.1 é um bom limite inferior para mapas de mm.
+            vmin = max(vmin_raw, 0.1)
+        elif vmax_raw <= 3:
+            # Caso para ET/P Ratio (0 a 1)
+            vmin = np.floor(vmin_raw * 10) / 10
+        else:
+            # Caso para Precipitação/ET (números grandes)
+            vmin = np.floor(vmin_raw / 5) * 5
+            vmin = int(vmin)
+            
+        vmin = float(vmin)
+        print('vmin', vmin)
 
     norm = LogNorm(vmin=vmin, vmax=vmax) if log_scale else None
     
@@ -156,15 +184,15 @@ def plot_images(data_dict, title_prefix, cbar_label, filename_prefix, output_dir
                     title_period = f"{month:02d}/{year}"
                     file_period = f"{year}_{month:02d}"
                 else:
-                    title_period = f"Mês {period_value:02d}"
-                    file_period = f"month_{period_value:02d}"
+                    title_period = f"{period_value:02d}"
+                    file_period = f"Year_{period_value:02d}"
             
             elif period == 'annual':
-                title_period = f"Ano {period_value}"
+                title_period = f"{period_value}"
                 file_period = f"year_{period_value}"
                 
             elif period == 'climatology':
-                title_period = f"Climatologia - Mês {period_value:02d}"
+                title_period = f"Climatology - Month {period_value:02d}"
                 file_period = f"clim_{period_value:02d}"
     
             title = f"{title_prefix} - {title_period}"
@@ -203,7 +231,8 @@ def plot_images(data_dict, title_prefix, cbar_label, filename_prefix, output_dir
                     extent=extent,
                     vmin=None if log_scale else vmin,
                     vmax=None if log_scale else vmax,
-                    norm=norm
+                    norm=norm,
+                    zorder=1
                 )
                 
                 if drainage_gdf is not None:
@@ -219,15 +248,12 @@ def plot_images(data_dict, title_prefix, cbar_label, filename_prefix, output_dir
                     basins_gdf.boundary.plot(
                         ax=ax,
                         linewidth=1.2,
-                        color='gray',
-                        alpha=0.9,
+                        color='black',
+                        alpha=0.3,
                         zorder=20
                     ) 
-                # zoom visual, sem cortar o array
-                ax.set_ylim(lat1, lat2)
-                ax.set_xlim(lon1, lon2)
-    
-                fig.colorbar(im, ax=ax, label=cbar_label)
+                    
+                cbar = fig.colorbar(im, ax=ax, label=cbar_label, shrink=0.8, aspect=25)
                 
             # ===== FLOW / REACHES =====
             else:
@@ -252,6 +278,10 @@ def plot_images(data_dict, title_prefix, cbar_label, filename_prefix, output_dir
             ax.set_title(title)
             ax.set_xlabel('Longitude')
             ax.set_ylabel('Latitude')
+            
+            ax.set_ylim(lat1, lat2)
+            ax.set_xlim(lon1, lon2)
+            
             plt.tight_layout()
             plt.savefig(os.path.join(output_dir, fname), dpi=300, bbox_inches='tight')
             plt.close(fig)
@@ -613,27 +643,6 @@ if era5 == 1:
             )  
             acc["T"].append(daily_mean)
             spatial_avg["T"].append(np.nanmean(daily_mean))
-#            # ---------- SOLAR RADIATION ----------    
-#            daily_data = []
-#            sr_group = f['Results/solar radiation']  # acesso rápido
-#            keys = list(sr_group.keys())
-#            for k in keys:
-#                data = sr_group[k][:]  # shape: (180, 350)
-#                data = np.where(data < -99, np.nan, data)
-#                daily_data.append(data)
-#
-#            daily_data = np.rot90(daily_data, k=1, axes=(1,2))
-#            daily_data = np.flip(daily_data, axis=1)
-#            
-#            daily_data = np.where(mask_nan, np.nan, daily_data)
-#                
-#            daily_sum = np.where(
-#                np.all(np.isnan(daily_data), axis=0),
-#                np.nan,
-#                np.nansum(daily_data, axis=0)
-#            )  
-#            acc["SR"].append(daily_sum)
-#            spatial_avg["SR"].append(np.nanmean(daily_sum))
             
     print("✅ ERA5 precipitation and temperature done")
         
@@ -692,7 +701,7 @@ for i in range(len(acc["PM"])):
     dates_list.append(start_date + timedelta(days=i))
 
 # Prioridade: Observational → ERA5
-P_source = "Pobs" if "Pobs" in acc else "P"
+P_source = "Pobs" if ("Pobs" in acc and len(acc["Pobs"]) > 0) else "P"
 P_dict  = {d: g for d, g in zip(dates_list, acc[P_source])}
 ET_dict = {d: g for d, g in zip(dates_list, acc["ET"])}
 RO_dict = {d: g for d, g in zip(dates_list, acc["RO"])}
@@ -713,7 +722,7 @@ for k, daily_dict in zip(["Recharge","Deficiency","ETP_ratio"],
 # ======================================================
 daily_df = pd.DataFrame({
     "date": dates_list,
-    "Pobs": spatial_avg.get("Pobs", [np.nan]*len(dates_list)),
+    #"Pobs": spatial_avg.get("Pobs", [np.nan]*len(dates_list)),
     "P": spatial_avg.get("P", [np.nan]*len(dates_list)),
     "T": spatial_avg.get("T", [np.nan]*len(dates_list)),
     #"SR": spatial_avg.get("SR", [np.nan]*len(dates_list)),
@@ -726,6 +735,12 @@ daily_df = pd.DataFrame({
     "Deficiency": spatial_avg.get("Deficiency", [np.nan]*len(dates_list)),
     "ETP_ratio": spatial_avg.get("ETP_ratio", [np.nan]*len(dates_list))
 })
+
+if "Pobs" in spatial_avg and len(spatial_avg["Pobs"]) > 0:
+    data_dict["Pobs"] = spatial_avg["Pobs"]
+else:
+    print("ℹ️ Pobs vazio ou não processado. Ignorando coluna no CSV final.")
+
 daily_df.to_csv(os.path.join("daily_values.csv"), index=False)
 print("✅ Daily spatial averages saved to CSV")
 
@@ -750,7 +765,6 @@ print("✅ Monthly, Annual and Climatology dictionaries generated")
 # ======================================================
 if plot == 1:
     variables = {
-       
         "PM": {
             "title": "Water Table Depth (WTD)",
             "cbar": "WTD (m)",
@@ -758,6 +772,7 @@ if plot == 1:
             "cmap": "turbo",
             "is_grid": True
         },
+
         "ET": {
             "title": "Evapotranspiration",
             "cbar": "ET (mm)",
@@ -765,6 +780,7 @@ if plot == 1:
             "cmap": "turbo",
             "is_grid": True
         },
+
         "RO": {
             "title": "Runoff",
             "cbar": "RO (mm)",
@@ -832,10 +848,12 @@ if plot == 1:
 
     # Loop para plotar todas as variáveis e escalas
     for var_name, var_props in variables.items():
+        print(f"🚀 Iniciando processamento da variável: {var_name} ({var_props['title']})")
         for period, acc_dict in zip(
             ["monthly", "annual", "climatology"],
             [acc_monthly, acc_annual, acc_climat]
         ):
+            print(f"   ∟ Gerando mapas para escala: {period}...")
             # Filtra apenas a variável desejada
             data_dict = {k: v for k, v in acc_dict.items() if k[0] == var_name}
             

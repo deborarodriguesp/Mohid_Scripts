@@ -18,16 +18,16 @@ observational = 1
 
 #Dates
 start_date = datetime(2011, 1, 1)
-end_date   = datetime(2020, 12, 31)
+end_date   = datetime(2021, 1, 1)
 
 # ---------------- Inputs  ----------------
-root_dir     = r"E:\Modelos\Modelo_Tocantins\Results\HDF"
-era5_folder  = r"D:\DOUTORAMENTO\Metereologia\ERA5\Interpolated_Watershed"
-precip_folder = r"E:\Modelos\Observational_precipitation\TAW_glue"
-hdf_path      = os.path.join(precip_folder, "chuva_observada.hdf5")
-
+root_dir     = r"F:\Debora\Tocantins\Results\HDF"
+era5_folder  = r"E:\Debora\Interpolated_Watershed"
+precip_folder = r"F:\Debora\Araguaia"
+hdf_path      = os.path.join(precip_folder, "chuva_observada.hdf5")   
+ 
 # ---------------- Bains ----------------
-shapefile_dir = "E:/Modelos/Modelo_Tocantins/Water Balance/micro_RH_TAW_cut/"
+shapefile_dir = "F:/Debora/Water Balance/shapefiles/"
 shapefiles = {
     "sono": os.path.join(shapefile_dir, "sono/sono.shp"),
     "parana": os.path.join(shapefile_dir, "parana/parana.shp"),
@@ -41,7 +41,7 @@ for name, shp in shapefiles.items():
     basins[name] = gpd.read_file(shp).to_crs(epsg=4326)
 
 # ---------------- Drainage Network ----------------
-dn_file = r"E:\Modelos\WaterBalance_TAW\DrainageNetwork\tocantins.shp"
+dn_file = r"F:\Debora\Water Balance\DrainageNetwork\tocantins.shp"
 dn_gdf = gpd.read_file(dn_file)
 
 # garantir CRS (assumindo lon/lat)
@@ -316,6 +316,8 @@ coords = np.column_stack((lon_flat, lat_flat))
 num_cells = coords.shape[0]
 
 grid_mask = {}  # máscara calculada uma única vez
+results = {name: [] for name in basins.keys()}
+basin_stats = {}
 
 if not grid_mask:
     grid_points = gpd.GeoDataFrame(
@@ -324,7 +326,7 @@ if not grid_mask:
     )
 
     for basin_name, basin_gdf in basins.items():
-        points_in = gpd.sjoin(grid_points, basin_gdf, predicate="within")      
+        points_in = gpd.sjoin(grid_points, basin_gdf, predicate="within")
         mask = np.zeros(latitude.shape, dtype=bool)
 
         for idx in points_in.index:
@@ -332,24 +334,6 @@ if not grid_mask:
             mask[i, j] = True
 
         grid_mask[basin_name] = mask
-        
-# ======================================================
-# ========= CRIAÇÃO DA MÁSCARA DE RIOS (EXCLUSÃO) ======
-# ======================================================
-
-# Criamos uma máscara global para os rios
-# Usamos um pequeno buffer se você quiser garantir que a célula inteira seja pega
-river_buffer = dn_gdf.buffer(0.01) # ajuste o buffer se necessário (0.01 graus ~ 1.1km)
-rivers_union = river_buffer.unary_union
-# Identifica pontos que estão DENTRO da rede de drenagem
-points_in_river = grid_points.geometry.intersects(rivers_union)
-
-mask_river_global = np.zeros(latitude.shape, dtype=bool)
-for idx in grid_points.index[points_in_river]:
-    i, j = np.unravel_index(idx, latitude.shape)
-    mask_river_global[i, j] = True
-
-print(f"🌊 Células de rio identificadas: {np.sum(mask_river_global)}")
 
 # ======================================================
 # ========= CRIAÇÃO DA MÁSCARA DE BACIAS ===============
@@ -360,95 +344,57 @@ for basin_name, basin_gdf in basins.items():
 
     for idx in points_in.index:
         i, j = np.unravel_index(idx, latitude.shape)
-        # SÓ ativamos a célula se ela estiver na bacia E NÃO for rio
-        if not mask_river_global[i, j]:
-            mask[i, j] = True
-
+        mask[i, j] = True
     grid_mask[basin_name] = mask
-    print(f"✅ Máscara final {basin_name}: {np.sum(mask)} células (Rios excluídos)")
 
-
-stats_fixas = {}
-for basin_name, basin_gdf in basins.items():
-    # 1. Pontos totais dentro do polígono
-    points_in = gpd.sjoin(grid_points, basin_gdf, predicate="within")
-    total_pts = len(points_in)
-    
-    # 2. Pontos ativos (excluindo rios)
-    mask_bacia_sem_rio = grid_mask[basin_name]
-    ativos_pts = np.sum(mask_bacia_sem_rio)
-    
-    stats_fixas[basin_name] = {
-        "Total_Bacia": total_pts,
-        "Ativos_Meteo": ativos_pts,
-        "Excluidos_Rio": total_pts - ativos_pts
-    }
-    
-    print(f"--- Bacia: {basin_name} ---")
-    print(f"  Total de células no shape: {total_pts}")
-    print(f"  Células úteis (sem rios): {ativos_pts} ({ativos_pts/total_pts:.1%})")
-    
-results = {name: [] for name in basins.keys()}
 for basin_name, mask in grid_mask.items():
     
-    total_da_bacia = stats_fixas[basin_name]["Ativos_Meteo"]
+    total_cells_mask = np.sum(mask)
+    et_active_counts = []
     
     for t in range(len(acc["PM"])):
         rec = {"Date": dates_list[t], "Basin": basin_name}
-        #skip = False
+        skip = False
         
-        data_ro = acc["RO"][t]
-        mask_efetiva = mask & (data_ro <= 300)
-        pts_efetivos = np.sum(mask_efetiva)
-        pts_outliers = total_da_bacia - pts_efetivos
-        # Salva estatística no registro
-        rec["n_pontos_calculo"] = pts_efetivos
-        rec["n_outliers_removidos"] = pts_outliers
         for var_name in all_vars:
             data_t = acc[var_name][t]
-            # Cálculo da média usando apenas os pontos efetivos
-            masked = np.where(mask_efetiva, data_t, np.nan)
+            masked = np.where(mask, data_t, np.nan)
             
-            if np.all(np.isnan(masked)):
-                value = np.nan
+            # --- NOVO FILTRO DE OUTLIER ---
+            if var_name == "ET":
+                # Filtro: só o que é maior que 0
+                et_filter = (masked > 0.00001)
+                cells_t = np.sum(et_filter)
+                et_active_counts.append(cells_t) # Salva para a média final
+                value = np.nanmean(np.where(et_filter, masked, np.nan))
             else:
                 value = np.nanmean(masked)
             
             rec[var_name] = value
-        
-        results[basin_name].append(rec)
+            if np.isnan(value): # Se a bacia toda falhar
+                skip = True
+                break
                 
-        #for var_name in all_vars:
-        #    data_t = acc[var_name][t]
-        #    masked = np.where(mask, data_t, np.nan)
-        #    
-        #    # --- NOVO FILTRO DE OUTLIER ---
-        #
-        #    if var_name == "RO":
-        #        masked = np.where(masked > 300, np.nan, masked)
-        #    # Verificamos se há dados válidos dentro da máscara da bacia
-        #    if np.all(np.isnan(masked)):
-        #        value = np.nan
-        #    else:
-        #        value = np.nanmean(masked)
-        #
-        #    
-        #    rec[var_name] = value
-        #    
-        #    # SÓ damos skip se for REALMENTE NaN (falta de dado). 
-        #    # O valor 0.0 é um dado válido e importante!
-        #    if np.isnan(value):
-        #        skip = True
+        if not skip:
+            results[basin_name].append(rec)
+            
+    # --- CÁLCULO DA MÉDIA DE ÁREA DA BACIA ---
+    avg_active_cells = np.mean(et_active_counts) if et_active_counts else 0
+    pct_utilizada = (avg_active_cells / total_cells_mask) * 100 if total_cells_mask > 0 else 0
+    
+    basin_stats[basin_name] = {
+        "Total_Cells": total_cells_mask,
+        "Avg_Active_ET_Cells": round(avg_active_cells, 2),
+        "Pct_Area_Media_Utilizada": round(pct_utilizada, 2)
+    }
 
-        #if not skip:
-        #    results[basin_name].append(rec)
-        
-#df_check = pd.DataFrame(results[list(basins.keys())[0]])
-#print("\nChecagem dos primeiros dias (Impacto dos Outliers):")
-#print(df_check[["Date", "n_pontos_calculo", "n_outliers_removidos", "RO"]].head())
-#sys.exit()
-#df_check.to_csv(daily_path, index=False)
-
+# Exibe o resumo no console
+print("\n=== RESUMO DE ÁREA ÚTIL (MÉDIA DO PERÍODO) ===")
+for b, stats in basin_stats.items():
+    print(f"Bacia: {b} | Células Totais: {stats['Total_Cells']} | "
+          f"Uso Médio ET: {stats['Pct_Area_Media_Utilizada']}%")
+          
+          
 # Criar DataFrame
 df_daily_basin = pd.DataFrame([r for recs in results.values() for r in recs])
 
@@ -488,7 +434,9 @@ def plot_global_histograms(acc, grid_mask, basin_name, output_dir):
             data_t = acc[var_name][t]
             # Pega apenas os pixels da bacia e remove NaNs
             masked_vals = data_t[mask]
-            valid_vals = masked_vals[~np.isnan(masked_vals)]
+            # --- FILTRO ESPECÍFICO PARA ET ---
+            if var_name == "ET":
+                valid_vals = valid_vals[valid_vals > 0.00001]
             all_values.append(valid_vals)
         
         # Transforma em um único array longo

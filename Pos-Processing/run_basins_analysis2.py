@@ -21,10 +21,10 @@ start_date = datetime(2011, 1, 1)
 end_date   = datetime(2021, 1, 1)
 
 # ---------------- Inputs  ----------------
-root_dir     = r"E:\Modelos\Modelo_Tocantins\Results\HDF"
+root_dir     = r"F:\Debora\Tocantins\Results\HDF"
 
 # ---------------- Bains ----------------
-shapefile_dir = "E:/Modelos/Modelo_Tocantins/Water Balance/micro_RH_TAW_cut/"
+shapefile_dir = "F:/Debora/Water Balance/shapefiles/"
 shapefiles = {
     "sono": os.path.join(shapefile_dir, "sono/sono.shp"),
     "parana": os.path.join(shapefile_dir, "parana/parana.shp"),
@@ -264,24 +264,7 @@ for basin_name, mask in grid_mask.items():
 # Criar DataFrame
 df_daily_basin = pd.DataFrame([r for recs in results.values() for r in recs])
 
-df_monthly_basin = df_daily_basin.groupby(['Basin', df_daily_basin['Date'].dt.to_period('M')]).agg({
-    **{var: 'sum' for var in accumulate_vars},
-    **{var: 'mean' for var in mean_vars}
-}).reset_index()
-
-df_annual_basin = df_daily_basin.groupby(['Basin', df_daily_basin['Date'].dt.year]).agg({
-    **{var: 'sum' for var in accumulate_vars},
-    **{var: 'mean' for var in mean_vars}
-}).reset_index()
-
-df_climat_basin = df_daily_basin.copy()
-df_climat_basin['month'] = df_climat_basin['Date'].dt.month
-df_climat_basin = df_climat_basin.groupby(['Basin', 'month']).agg({
-    **{var: 'sum' for var in accumulate_vars},   # acumuladas → somar
-    **{var: 'mean' for var in mean_vars}         # médias → tirar média
-}).reset_index()
-
-output_dir = "basin_outputs_rwc_stress"
+output_dir = "basin_outputs2"
 os.makedirs(output_dir, exist_ok=True)
 
 for basin_name in basins.keys():
@@ -291,21 +274,4 @@ for basin_name in basins.keys():
     daily_path = os.path.join(output_dir, f"{basin_name}_daily.csv")
     df_daily.to_csv(daily_path, index=False)
     print(f"✅ Daily exported: {daily_path}")
-    
-    # ---------------- MONTHLY ----------------
-    df_monthly = df_monthly_basin[df_monthly_basin["Basin"] == basin_name]
-    monthly_path = os.path.join(output_dir, f"{basin_name}_monthly.csv")
-    df_monthly.to_csv(monthly_path, index=False)
-    print(f"✅ Monthly exported: {monthly_path}")
-    
-    # ---------------- ANNUAL ----------------
-    df_annual = df_annual_basin[df_annual_basin["Basin"] == basin_name]
-    annual_path = os.path.join(output_dir, f"{basin_name}_annual.csv")
-    df_annual.to_csv(annual_path, index=False)
-    print(f"✅ Annual exported: {annual_path}")
-    
-    # ---------------- CLIMATOLOGY ----------------
-    df_climat = df_climat_basin[df_climat_basin["Basin"] == basin_name]
-    climat_path = os.path.join(output_dir, f"{basin_name}_climatology.csv")
-    df_climat.to_csv(climat_path, index=False)
-    print(f"✅ Climatology exported: {climat_path}")
+   
