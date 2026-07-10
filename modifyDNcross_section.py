@@ -78,7 +78,7 @@ def modify_drainage_network(input_path, output_path, d_height=0.0, d_top_width=0
 # ============================================================
 # CONFIGURATION
 # ============================================================
-file_path = r"D:\DOUTORAMENTO\TwinStream\Projetos\TwinStream_ModelosHidrologicos\Modelos\Md_Cor_Rvr_InilWtrDepth0\GeneralData\DigitalTerrain"
+file_path = r"D:\YOUR\PATH\GeneralData\DigitalTerrain"
 original = "DrainageNetwork.dnt"
 modified = "DrainageNetwork_Mod.dnt"
 
