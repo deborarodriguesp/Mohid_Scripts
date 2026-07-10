@@ -117,87 +117,6 @@ def get_sorted_basins(df):
     
     return extra_basins + sorted_list    
 
-output_dir = "./outputs" # Certifique-se que esta pasta existe
-if not os.path.exists(output_dir): os.makedirs(output_dir)
-    
-# --- MOHID ---
-path1 = r"F:\Debora\Water Balance\ET\Tocantins\basin_outputs"
-path2 = r"F:\Debora\Water Balance\ET\Tocantins\basin_outputs2"
-files1 = glob(os.path.join(path1, "*_daily.csv"))
-files2 = glob(os.path.join(path2, "*_daily.csv"))
-df_mohid1 = load_mohid_files(files1, "1")
-df_mohid2 = load_mohid_files(files2, "2")
-df_mohid = pd.concat([df_mohid1, df_mohid2], ignore_index=True)
-df_mohid = df_mohid.groupby(["Date", "Basin"]).first().reset_index()
-
-df_mohid["Date"] = pd.to_datetime(df_mohid["Date"]).dt.normalize()
-df_mohid["Basin"] = df_mohid["Basin"].str.strip().str.lower()
-df_mohid = df_mohid.rename(columns={"PM": "WTD"})
-
-accumulate_vars = ["P","Pobs","ET","RO", "Infiltration"]
-mean_vars = ["WTD", "RWC", "RO_FLOW", "T", "WS", "TS"] # Trocado PM por WTD
-
-# 1. Agregação Mensal (Base para o cálculo correto)
-df_monthly_mohid, _, _ = aggregate_timescales(
-    df_mohid,
-    accumulate_vars,
-    mean_vars,
-    date_col="Date"
-)
-
-P_col = "Pobs" if "Pobs" in df_monthly_mohid.columns else "P"
-# Recarga Mensal = O que sobrou da chuva após ET e RO
-df_monthly_mohid['Recharge'] = (df_monthly_mohid[P_col] - 
-                                df_monthly_mohid['ET'] - 
-                                df_monthly_mohid['RO']).clip(lower=0)
-# Deficiência Mensal = Quando a ET é maior que a Chuva
-df_monthly_mohid['Deficiency'] = (df_monthly_mohid['ET'] - 
-                                  df_monthly_mohid[P_col]).clip(lower=0)
-# Razão ET/P (Índice de Aridez local)
-df_monthly_mohid['ETP_ratio'] = df_monthly_mohid['ET'] / df_monthly_mohid[P_col].replace(0, np.nan)
-
-_, df_annual_mohid, df_climat_mohid = aggregate_timescales(
-    df_monthly_mohid, 
-    accumulate_vars, 
-    mean_vars, 
-    date_col="YearMonth" 
-)
-
-# --- GLEAM ---
-path_gleam = r"F:\Debora\Water Balance\ET\Gleam"
-files = [
-    os.path.join(path_gleam, "Consolidado_Diario_ET.csv"),
-    os.path.join(path_gleam, "Consolidado_Diario_S.csv"),
-    os.path.join(path_gleam, "Consolidado_Diario_SMrz.csv")
-]
-var_names = ["ET_gleam", "S_gleam", "SMrz_gleam"]
-df_gleam = load_gleam(files, var_names)
-df_gleam["Date"] = pd.to_datetime(df_gleam["Date"]).dt.normalize()
-df_gleam["Basin"] = df_gleam["Basin"].str.strip().str.lower()
-
-accumulate_vars = ["ET_gleam"]
-mean_vars = ["S_gleam", "SMrz_gleam"]
-df_monthly_gleam, df_annual_gleam, df_climat_gleam = aggregate_timescales(
-    df_gleam,
-    accumulate_vars,
-    mean_vars,
-    date_col="Date"
-)
-
-# --- ALL ANNUAL DFS ---
-df_total = df_annual_mohid.merge(
-    df_annual_gleam,
-    on=["Year","Basin"],
-    how="inner"
-)
-
-# Exportar Climatologia MOHID
-df_climat_mohid.to_csv(os.path.join(output_dir, "Climatologia_Mensal_MOHID.csv"), index=False, sep=';')
-# Exportar Climatologia GLEAM
-df_climat_gleam.to_csv(os.path.join(output_dir, "Climatologia_Mensal_GLEAM.csv"), index=False, sep=';')
-
-print("Arquivos de climatologia exportados com sucesso para a pasta de outputs.")
-
 # =================================================================
 # ESTATÍSTICAS (DIÁRIO E MENSAL)
 # =================================================================
@@ -232,18 +151,6 @@ def calculate_all_stats(df_m, df_g, time_col_m, time_col_g):
                 results.append(s)
     
     return pd.DataFrame(results)
-
-
-# --- EXECUÇÃO ---
-# 1. Stats Diários
-df_daily_stats = calculate_all_stats(df_mohid, df_gleam, "Date", "Date")
-df_daily_stats.to_csv(os.path.join(output_dir, "Stats_ET_Diario_CalVal.csv"), index=False, sep=';')
-
-# 2. Stats Mensais
-df_monthly_stats = calculate_all_stats(df_monthly_mohid, df_monthly_gleam, "YearMonth", "YearMonth")
-df_monthly_stats.to_csv(os.path.join(output_dir, "Stats_ET_Mensal_CalVal.csv"), index=False, sep=';')
-
-print("✅ Estatísticas de Calibração e Validação calculadas!")
 
 def plot_ET_monthly(df_m_monthly, df_g_monthly, output_dir):
     # 1. Preparação e Sincronização
@@ -328,9 +235,6 @@ def plot_ET_monthly(df_m_monthly, df_g_monthly, output_dir):
     plt.close()
     print(f"📈 Plot mensal consolidado salvo em: {output_path}")
 
-# Executar
-plot_ET_monthly(df_monthly_mohid, df_monthly_gleam, output_dir)
-
 # =================================================================
 # CORRELATION PLOT
 # =================================================================
@@ -366,15 +270,10 @@ def plot_mohid_correlation_analysis(df_monthly):
         output_path = os.path.normpath(os.path.join(output_dir, filename))
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         print(f"Análise de correlação MOHID salva para {basin}")
-        # plt.show()
-
-# Executar apenas com o dataframe mensal do MOHID
-plot_mohid_correlation_analysis(df_monthly_mohid)
 
 # =================================================================
 # ANUAL
 # =================================================================
-
 def plot_annual(df_m, df_g, output_dir):
     basins = get_sorted_basins(df_m)
     n_basins = len(basins)      
@@ -516,32 +415,9 @@ def plot_annual(df_m, df_g, output_dir):
     plt.close()
     print(f"Atlas anual sincronizado salvo em: {output_path}")
 
-# Executar
-plot_annual(df_annual_mohid, df_annual_gleam, output_dir)
-
-# 1. Selecionar apenas as colunas de interesse
-cols_interesse = [
-    "Basin", "Year", 
-    "ET", "ET_gleam",           # Evapotranspiração
-    "RWC", "SMrz_gleam", 'WTD',       # Umidade Solo
-    "WS", "TS", "S_gleam",       # Stresses (Water, Temperature e GLEAM Stress)
-    "Pobs",  "T", "Infiltration"
-]
-
-# 2. Criar o DataFrame final filtrado
-df_tabela_anual = df_total[cols_interesse].copy()
-# 3. Organizar por Bacia e Ano para facilitar a leitura
-df_tabela_anual = df_tabela_anual.sort_values(["Basin", "Year"])
-# 4. Arredondar os valores para 3 casas decimais (opcional, para limpeza)
-df_tabela_anual = df_tabela_anual.round(3)
-# 5. Salvar em CSV
-df_tabela_anual.to_csv(os.path.join(output_dir, "Tabela_Anual_MOHID_GLEAM.csv"), index=False, sep=';')
-print("Tabela consolidada gerada com sucesso:")
-
 # =================================================================
 # CLIMATOLOGIA
 # =================================================================
-
 def plot_climatology(df_climat_m, df_climat_g):
     basins = get_sorted_basins(df_climat_m)
     n_basins = len(basins)
@@ -674,6 +550,122 @@ def plot_climatology(df_climat_m, df_climat_g):
     output_path = os.path.join(output_dir, "Climatologia.png")
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"Atlas consolidado salvo em: {output_path}")
+
+output_dir = "./outputs" # Certifique-se que esta pasta existe
+if not os.path.exists(output_dir): os.makedirs(output_dir)
+    
+# --- MOHID ---
+path1 = r"F:\Debora\Water Balance\ET\Tocantins\basin_outputs"
+path2 = r"F:\Debora\Water Balance\ET\Tocantins\basin_outputs2"
+files1 = glob(os.path.join(path1, "*_daily.csv"))
+files2 = glob(os.path.join(path2, "*_daily.csv"))
+df_mohid1 = load_mohid_files(files1, "1")
+df_mohid2 = load_mohid_files(files2, "2")
+df_mohid = pd.concat([df_mohid1, df_mohid2], ignore_index=True)
+df_mohid = df_mohid.groupby(["Date", "Basin"]).first().reset_index()
+
+df_mohid["Date"] = pd.to_datetime(df_mohid["Date"]).dt.normalize()
+df_mohid["Basin"] = df_mohid["Basin"].str.strip().str.lower()
+df_mohid = df_mohid.rename(columns={"PM": "WTD"})
+
+accumulate_vars = ["P","Pobs","ET","RO", "Infiltration"]
+mean_vars = ["WTD", "RWC", "RO_FLOW", "T", "WS", "TS"] # Trocado PM por WTD
+
+# 1. Agregação Mensal (Base para o cálculo correto)
+df_monthly_mohid, _, _ = aggregate_timescales(
+    df_mohid,
+    accumulate_vars,
+    mean_vars,
+    date_col="Date"
+)
+
+P_col = "Pobs" if "Pobs" in df_monthly_mohid.columns else "P"
+# Recarga Mensal = O que sobrou da chuva após ET e RO
+df_monthly_mohid['Recharge'] = (df_monthly_mohid[P_col] - 
+                                df_monthly_mohid['ET'] - 
+                                df_monthly_mohid['RO']).clip(lower=0)
+# Deficiência Mensal = Quando a ET é maior que a Chuva
+df_monthly_mohid['Deficiency'] = (df_monthly_mohid['ET'] - 
+                                  df_monthly_mohid[P_col]).clip(lower=0)
+# Razão ET/P (Índice de Aridez local)
+df_monthly_mohid['ETP_ratio'] = df_monthly_mohid['ET'] / df_monthly_mohid[P_col].replace(0, np.nan)
+
+_, df_annual_mohid, df_climat_mohid = aggregate_timescales(
+    df_monthly_mohid, 
+    accumulate_vars, 
+    mean_vars, 
+    date_col="YearMonth" 
+)
+
+# --- GLEAM ---
+path_gleam = r"F:\Debora\Water Balance\ET\Gleam"
+files = [
+    os.path.join(path_gleam, "Consolidado_Diario_ET.csv"),
+    os.path.join(path_gleam, "Consolidado_Diario_S.csv"),
+    os.path.join(path_gleam, "Consolidado_Diario_SMrz.csv")
+]
+var_names = ["ET_gleam", "S_gleam", "SMrz_gleam"]
+df_gleam = load_gleam(files, var_names)
+df_gleam["Date"] = pd.to_datetime(df_gleam["Date"]).dt.normalize()
+df_gleam["Basin"] = df_gleam["Basin"].str.strip().str.lower()
+
+accumulate_vars = ["ET_gleam"]
+mean_vars = ["S_gleam", "SMrz_gleam"]
+df_monthly_gleam, df_annual_gleam, df_climat_gleam = aggregate_timescales(
+    df_gleam,
+    accumulate_vars,
+    mean_vars,
+    date_col="Date"
+)
+
+# --- ALL ANNUAL DFS ---
+df_total = df_annual_mohid.merge(
+    df_annual_gleam,
+    on=["Year","Basin"],
+    how="inner"
+)
+
+# Exportar Climatologia MOHID
+df_climat_mohid.to_csv(os.path.join(output_dir, "Climatologia_Mensal_MOHID.csv"), index=False, sep=';')
+# Exportar Climatologia GLEAM
+df_climat_gleam.to_csv(os.path.join(output_dir, "Climatologia_Mensal_GLEAM.csv"), index=False, sep=';')
+
+print("Arquivos de climatologia exportados com sucesso para a pasta de outputs.")
+# --- EXECUÇÃO ---
+# 1. Stats Diários
+df_daily_stats = calculate_all_stats(df_mohid, df_gleam, "Date", "Date")
+df_daily_stats.to_csv(os.path.join(output_dir, "Stats_ET_Diario_CalVal.csv"), index=False, sep=';')
+
+# 2. Stats Mensais
+df_monthly_stats = calculate_all_stats(df_monthly_mohid, df_monthly_gleam, "YearMonth", "YearMonth")
+df_monthly_stats.to_csv(os.path.join(output_dir, "Stats_ET_Mensal_CalVal.csv"), index=False, sep=';')
+
+print("✅ Estatísticas de Calibração e Validação calculadas!")
+# Executar
+plot_ET_monthly(df_monthly_mohid, df_monthly_gleam, output_dir)
+# Executar apenas com o dataframe mensal do MOHID
+plot_mohid_correlation_analysis(df_monthly_mohid)
+# Executar
+plot_annual(df_annual_mohid, df_annual_gleam, output_dir)
+
+# 1. Selecionar apenas as colunas de interesse
+cols_interesse = [
+    "Basin", "Year", 
+    "ET", "ET_gleam",           # Evapotranspiração
+    "RWC", "SMrz_gleam", 'WTD',       # Umidade Solo
+    "WS", "TS", "S_gleam",       # Stresses (Water, Temperature e GLEAM Stress)
+    "Pobs",  "T", "Infiltration"
+]
+
+# 2. Criar o DataFrame final filtrado
+df_tabela_anual = df_total[cols_interesse].copy()
+# 3. Organizar por Bacia e Ano para facilitar a leitura
+df_tabela_anual = df_tabela_anual.sort_values(["Basin", "Year"])
+# 4. Arredondar os valores para 3 casas decimais (opcional, para limpeza)
+df_tabela_anual = df_tabela_anual.round(3)
+# 5. Salvar em CSV
+df_tabela_anual.to_csv(os.path.join(output_dir, "Tabela_Anual_MOHID_GLEAM.csv"), index=False, sep=';')
+print("Tabela consolidada gerada com sucesso:")
 
 # Executar
 plot_climatology(df_climat_mohid, df_climat_gleam)
